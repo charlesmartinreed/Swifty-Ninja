@@ -47,6 +47,8 @@ class GameScene: SKScene {
     var chainDelay = 3.0 //how long until new enemy spawn when sequence type is chain or fastChain
     var nextSequenceQueued = true //lets us know when all enemies are destroyed and we can create more
     
+    var gameEnded = false
+    
     override func didMove(to view: SKView) {
         
         //creating and placing our background
@@ -207,6 +209,11 @@ class GameScene: SKScene {
     }
     
     func tossEnemies() {
+        //make sure the game isn't ended
+        if gameEnded {
+            return
+        }
+        
         //subtly speeding up the gameplay as the player progresses
         popupTime *= 0.991
         chainDelay *= 0.99
@@ -275,10 +282,25 @@ class GameScene: SKScene {
             for node in activeEnemies {
                 //i.e, if the enemy has fallen off the screen, remove it from node parent AND activeEnemies array
                 if node.position.y < -140 {
-                    node.removeFromParent()
+                    node.removeAllActions()
                     
-                    if let index = activeEnemies.index(of: node) {
-                        activeEnemies.remove(at: index)
+                    //if penguin was missed, subtract a life
+                    if node.name == "enemy" {
+                        node.name = ""
+                        subtractLife()
+                        
+                        node.removeFromParent()
+                        
+                        if let index = activeEnemies.index(of: node) {
+                            activeEnemies.remove(at: index)
+                        }
+                    } else if node.name == "bombContainer" {
+                        node.name = ""
+                        node.removeFromParent()
+                        
+                        if let index = activeEnemies.index(of: node) {
+                            activeEnemies.remove(at: index)
+                        }
                     }
                 }
             }
@@ -303,6 +325,76 @@ class GameScene: SKScene {
             if bombSoundEffect != nil {
                 bombSoundEffect.stop()
                 bombSoundEffect = nil
+            }
+        }
+    }
+    
+    //MARK:- Subtracting lives and end game states
+    func subtractLife() {
+        //called when penguin falls off screen without being tapped
+        
+        lives -= 1
+        
+        run(SKAction.playSoundFileNamed("wrong.caf", waitForCompletion: false))
+        
+        var life: SKSpriteNode
+        
+        if lives == 2 {
+            life = livesImages[0]
+        } else if lives == 1 {
+            life = livesImages[1]
+        } else {
+            life = livesImages[2]
+            endGame(triggeredByBomb: false)
+        }
+        
+        life.texture = SKTexture(imageNamed: "sliceLifeGone")
+        life.xScale = 1.3
+        life.yScale = 1.3
+        life.run(SKAction.scale(to: 1, duration: 0.1))
+        
+    }
+    
+    func endGame(triggeredByBomb: Bool) {
+        if gameEnded {
+            return
+        }
+        
+        //freeze the screen
+        gameEnded = true
+        physicsWorld.speed = 0
+        isUserInteractionEnabled = false
+        
+        if bombSoundEffect != nil {
+            bombSoundEffect.stop()
+            bombSoundEffect = nil
+        }
+        
+        if !triggeredByBomb {
+            DispatchQueue.main.async {
+                [unowned self] in
+                let gameOver = SKLabelNode(fontNamed: "Chalkduster")
+                gameOver.text = "You lost!"
+                gameOver.fontSize = 48
+                gameOver.position = CGPoint(x: 512, y: 384)
+                self.addChild(gameOver)
+                
+            }
+        }
+        
+        //show the lives gone image
+        if triggeredByBomb {
+            livesImages[0].texture = SKTexture(imageNamed: "sliceLifeGone")
+            livesImages[1].texture = SKTexture(imageNamed: "sliceLifeGone")
+            livesImages[2].texture = SKTexture(imageNamed: "sliceLifeGone")
+            
+            DispatchQueue.main.async {
+                [unowned self] in
+                let gameOver = SKLabelNode(fontNamed: "Chalkduster")
+                gameOver.text = "Kaboom!"
+                gameOver.fontSize = 48
+                gameOver.position = CGPoint(x: 512, y: 384)
+                self.addChild(gameOver)
             }
         }
     }
@@ -332,6 +424,12 @@ class GameScene: SKScene {
     }
     
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        //make sure the game hasn't ended
+        if gameEnded {
+            return
+        }
+        
+        
         //figure out where the user touched, add that location to the slice points array and redraw the slice shape
         guard let touch = touches.first else { return }
         
@@ -343,6 +441,71 @@ class GameScene: SKScene {
         //playing our sound effect for the player's touch
         if isSwooshSoundActive == false {
             playSwooshSound()
+        }
+        
+        //detect whether or not user has sliced penguin or bomb
+        let nodesAtPoint = nodes(at: location)
+        
+        for node in nodesAtPoint {
+            if node.name == "enemy" {
+                
+                //create a particle effect over the penguin
+                let emitter = SKEmitterNode(fileNamed: "sliceHitEnemy")!
+                emitter.position = node.position
+                addChild(emitter)
+                
+                //clear the node name
+                node.name = ""
+                
+                //disable isDynamic so it can't be swiped again
+                node.physicsBody?.isDynamic = false
+                
+                //scale and fade out the penguin
+                let scaleOut = SKAction.scale(to: 0.001, duration: 0.02)
+                let fadeOut = SKAction.fadeOut(withDuration: 0.2)
+                
+                //group actions happen all at once
+                let group = SKAction.group([scaleOut, fadeOut])
+                
+                //remove penguin from scene after animations
+                //sequence actions happen in listed order
+                let seq = SKAction.sequence([group, SKAction.removeFromParent()])
+                node.run(seq)
+                
+                //add to player's score
+                score += 1
+                
+                //remove enemy from activeEnemies array
+                let index = activeEnemies.index(of: node as! SKSpriteNode)!
+                activeEnemies.remove(at: index)
+                
+                //play a sound to let player know hit was successful
+                run(SKAction.playSoundFileNamed("whack.caf", waitForCompletion: false))
+            } else if node.name == "bomb" {
+                
+                let emitter = SKEmitterNode(fileNamed: "sliceHitBomb")!
+                //the bomb image is IN the parent container so we need to hit the parent to get to the image
+                emitter.position = node.parent!.position
+                addChild(emitter)
+                
+                node.name = ""
+                node.parent?.physicsBody?.isDynamic = false
+                
+                let scaleOut = SKAction.scale(to: 0.001, duration: 0.2)
+                let fadeOut = SKAction.fadeOut(withDuration: 0.2)
+                let group = SKAction.group([scaleOut, fadeOut])
+                
+                let seq = SKAction.sequence([group, SKAction.removeFromParent()])
+                node.parent?.run(seq)
+                
+                let index = activeEnemies.index(of: node.parent as! SKSpriteNode)!
+                activeEnemies.remove(at: index)
+                
+                run(SKAction.playSoundFileNamed("explosion.caf", waitForCompletion: false))
+               
+                //if the player hits a bomb, the game is over immediately
+                endGame(triggeredByBomb: true)
+            }
         }
     }
     
