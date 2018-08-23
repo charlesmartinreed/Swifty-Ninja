@@ -14,6 +14,11 @@ enum ForceBomb {
     case never, always, random
 }
 
+//notice this enum is mapped to int values
+enum SequenceType: Int {
+    case oneNoBomb, one, twoWithOneBomb, two, three, four, chain, fastChain
+}
+
 class GameScene: SKScene {
     //MARK:- PROPERTIES
     var gameScore: SKLabelNode!
@@ -35,6 +40,13 @@ class GameScene: SKScene {
     var isSwooshSoundActive = false
     var bombSoundEffect: AVAudioPlayer!
     
+    //enemy creation PROPERTIES
+    var popupTime = 0.9 //how long to wait after enemy destroyed to create new ones
+    var sequence: [SequenceType]! //defines which enemies to create
+    var sequencePosition = 0 //our current point in the game
+    var chainDelay = 3.0 //how long until new enemy spawn when sequence type is chain or fastChain
+    var nextSequenceQueued = true //lets us know when all enemies are destroyed and we can create more
+    
     override func didMove(to view: SKView) {
         
         //creating and placing our background
@@ -52,6 +64,18 @@ class GameScene: SKScene {
         createScore()
         createLives()
         createSlices()
+        
+        sequence = [.oneNoBomb, .oneNoBomb, .twoWithOneBomb, .twoWithOneBomb, .three, .one, .chain]
+        
+        //using rawValue to get at the int values that represent our enum cases
+        for _ in 0...1000 {
+            let nextSequence = SequenceType(rawValue: RandomInt(min: 2, max: 7))!
+            sequence.append(nextSequence)
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            [unowned self] in self.tossEnemies()
+        }
     }
     
     //MARK:- Game Initalization Methods
@@ -98,6 +122,7 @@ class GameScene: SKScene {
         addChild(activeSliceBG)
         addChild(activeSliceFG)
     }
+    //MARK:- Create Enemies and Toss Enemies
     
     //This function is responsible for launching either a penguin or a bomb into the air for the player to swipe.
     //Needs to accept param of whether or not to force a bomb or to be random
@@ -127,7 +152,7 @@ class GameScene: SKScene {
             enemy.addChild(bombImage)
             
             //if bomb sound playing, stop and destroy it by setting to nil
-            if bombSoundEffect.isPlaying == true {
+            if bombSoundEffect != nil {
                 bombSoundEffect.stop()
                 bombSoundEffect = nil
             }
@@ -181,9 +206,91 @@ class GameScene: SKScene {
         activeEnemies.append(enemy)
     }
     
+    func tossEnemies() {
+        //subtly speeding up the gameplay as the player progresses
+        popupTime *= 0.991
+        chainDelay *= 0.99
+        physicsWorld.speed *= 1.02
+        
+        let sequenceType = sequence[sequencePosition]
+        
+        
+        //each sequence in our array creates one or more enemies and waits for them to be destroyed before continuing
+        switch sequenceType {
+        case .oneNoBomb:
+            createEnemy(forceBomb: .never)
+            
+        case .one:
+            createEnemy()
+            
+        case .twoWithOneBomb:
+            createEnemy(forceBomb: .never)
+            createEnemy(forceBomb: .always)
+            
+        case .two:
+            createEnemy()
+            createEnemy()
+            
+        case .three:
+            createEnemy()
+            createEnemy()
+            createEnemy()
+            
+        case .four:
+            createEnemy()
+            createEnemy()
+            createEnemy()
+            createEnemy()
+            
+            //chain sequences DON'T wait for enemies to be destroyed before creating a new set of enemies
+        case .chain:
+            createEnemy()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 5.0)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 5.0 * 2)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 5.0 * 3)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 5.0 * 4)) {[unowned self] in self.createEnemy()}
+            
+        case .fastChain:
+            createEnemy()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 10.0)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 10.0 * 2)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 10.0 * 3)) {[unowned self] in self.createEnemy()}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (chainDelay / 10.0 * 4)) {[unowned self] in self.createEnemy()}
+
+        }
+        
+        sequencePosition += 1
+        
+        //if false, don't have a call to tossEnemies waiting to execute. Only true in gap between previous sequence item completing and tossEnemies being called.
+        nextSequenceQueued = false
+    }
+    
     //stopping our bomb sound
     override func update(_ currentTime: TimeInterval) {
         var bombCount = 0
+        
+        if activeEnemies.count > 0 {
+            for node in activeEnemies {
+                //i.e, if the enemy has fallen off the screen, remove it from node parent AND activeEnemies array
+                if node.position.y < -140 {
+                    node.removeFromParent()
+                    
+                    if let index = activeEnemies.index(of: node) {
+                        activeEnemies.remove(at: index)
+                    }
+                }
+            }
+        } else {
+            if !nextSequenceQueued {
+                DispatchQueue.main.asyncAfter(deadline: .now() + popupTime) {
+                    [unowned self] in self.tossEnemies()
+                }
+                
+                nextSequenceQueued = true
+            }
+        }
         
         for node in activeEnemies {
             if node.name == "bombContainer" {
