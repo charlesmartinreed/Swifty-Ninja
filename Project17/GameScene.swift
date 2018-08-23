@@ -8,6 +8,11 @@
 
 import SpriteKit
 import GameplayKit
+import AVFoundation
+
+enum ForceBomb {
+    case never, always, random
+}
 
 class GameScene: SKScene {
     //MARK:- PROPERTIES
@@ -25,7 +30,10 @@ class GameScene: SKScene {
     var activeSliceFG: SKShapeNode!
     var activeSlicePoints = [CGPoint]()
     
+    var activeEnemies = [SKSpriteNode]()
+    
     var isSwooshSoundActive = false
+    var bombSoundEffect: AVAudioPlayer!
     
     override func didMove(to view: SKView) {
         
@@ -89,6 +97,107 @@ class GameScene: SKScene {
         
         addChild(activeSliceBG)
         addChild(activeSliceFG)
+    }
+    
+    //This function is responsible for launching either a penguin or a bomb into the air for the player to swipe.
+    //Needs to accept param of whether or not to force a bomb or to be random
+    //use that param input to decide whether to create a bomb or penguin and then do so
+    //display the enemy on screen and add to activeEnemies array
+    func createEnemy(forceBomb: ForceBomb = .random) {
+        var enemy: SKSpriteNode
+        
+        //using this to determine if enemy sprite will be a bomb or penguin
+        var enemyType = RandomInt(min: 0, max: 6)
+        
+        if forceBomb == .never {
+            enemyType = 1
+        } else if forceBomb == .always {
+            enemyType = 0
+        }
+        
+        if enemyType == 0 {
+            //new SKSpriteNode to hold the bomb and fuse images as children.
+            enemy = SKSpriteNode()
+            enemy.zPosition = 1
+            enemy.name = "bombContainer"
+            
+            //create bomb image, add to container
+            let bombImage = SKSpriteNode(imageNamed: "sliceBomb")
+            bombImage.name = "bomb"
+            enemy.addChild(bombImage)
+            
+            //if bomb sound playing, stop and destroy it by setting to nil
+            if bombSoundEffect.isPlaying == true {
+                bombSoundEffect.stop()
+                bombSoundEffect = nil
+            }
+            
+            //create new bomb fuse sound effect, and play
+            let path = Bundle.main.path(forResource: "sliceBombFuse.caf", ofType: nil)!
+            let url = URL(fileURLWithPath: path)
+            let sound = try! AVAudioPlayer(contentsOf: url)
+            bombSoundEffect = sound
+            sound.play()
+            
+            //create our particle emitter node, position at end of bomb image's fuse and add to container
+            let emitter = SKEmitterNode(fileNamed: "sliceFuse")!
+            emitter.position = CGPoint(x: 76, y: 64)
+            enemy.addChild(emitter)
+        } else {
+            enemy = SKSpriteNode(imageNamed: "penguin")
+            run(SKAction.playSoundFileNamed("launch.caf", waitForCompletion: false))
+            enemy.name = "enemy"
+        }
+        
+        //give enemy a random position off bottom edge of screen
+        let randomPosition = CGPoint(x: RandomInt(min: 64, max: 960), y: -128)
+        enemy.position = randomPosition
+        
+        //create a random angular velocity, which decides how enemy should spin
+        let regularAngularVelocity = CGFloat(RandomInt(min: -6, max: 6) / 2)
+        var randomXVelocity = 0
+        
+        //create a random X velocity to determine how far the enemy should move horizontally
+        if randomPosition.x < 256 {
+            randomXVelocity = RandomInt(min: 8, max: 15)
+        } else if randomPosition.x < 512 {
+            randomXVelocity = RandomInt(min: 3, max: 5)
+        } else if randomPosition.x < 768 {
+            randomXVelocity = -RandomInt(min: 3, max: 5)
+        } else {
+            randomXVelocity = -RandomInt(min: 8, max: 15)
+        }
+        
+        //create a random Y velocity to make things fly in at different speeds
+        let randomYVelocity = RandomInt(min: 24, max: 32)
+        
+        //give all enemies circular physics body and set collisionBitMask to 0 so they can't collide
+        enemy.physicsBody = SKPhysicsBody(circleOfRadius: 64)
+        enemy.physicsBody?.velocity = CGVector(dx: randomXVelocity * 40, dy: randomYVelocity * 40)
+        enemy.physicsBody?.angularVelocity = regularAngularVelocity
+        enemy.physicsBody?.collisionBitMask = 0
+        
+        addChild(enemy)
+        activeEnemies.append(enemy)
+    }
+    
+    //stopping our bomb sound
+    override func update(_ currentTime: TimeInterval) {
+        var bombCount = 0
+        
+        for node in activeEnemies {
+            if node.name == "bombContainer" {
+                bombCount += 1
+                break
+            }
+        }
+        
+        if bombCount == 0 {
+            if bombSoundEffect != nil {
+                bombSoundEffect.stop()
+                bombSoundEffect = nil
+            }
+        }
     }
     
     //MARK:- Touch functions
